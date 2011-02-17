@@ -1,66 +1,56 @@
-A macro that aggregates property values across multiple projects. 
+Table macro that allows THIS CARD.name to be used in TAGGED WITH section of MQL
 
-Support for this macro begins with Mingle 3.0. 
+This is a very simple macro that allows us to use "TAGGED WITH THIS CARD.name" in MQL. This macro is specific to a case we have in ThoughtWorks Studios. Most people won't find it particularly useful, but I'm showing it as an example of a simple macro that allows us to do things that Mingle couldn't normally do.
 
-The cross-project-rollup macro will work using the following markup: 
+Background
 
-{{
-   cross-project-rollup
-   project-group:  < project >, < project >
-   rows: < property name >
-   columns:
-   -     label: < text for label >
-         aggregate: < aggregate >
-         conditions: < condition >
-   total: true
-   sub-totals:
-   -     label: < text for label >
-         conditions: < condition >
-}}
+We have a Mingle project for each of our products. In each project we tag cards that are customer requests with the customer name and " request". We also have a project to track customer requests. E.g., suppose Acme requested features for Go, Mingle and Twist. We would have cards in those three projects representing those request. Those cards would all be tagged with "Acme request". Additionally, in our customer requests project, we would have an "Acme requests" card that shows the requests for each product.
 
-The following is a list of parameters and how they should be used with this macro: 
-
-project-group - not required. List of project identifiers. Defaults to current project. 
-
-rows -	required. A property. Each row is a property value. The order of the rows property values is alphabetically by card name if a card or tree 
-relationship property, by number if they are numeric properties, by display name if they are team properties, by date if they are date properties, by the bespoke order of the first project if they are text properties.
-
-rows-conditions - not required. MQL where condition to restrict the rows shown in the table.
-
-zero-value-rows - not required. True or false. Determines whether rows with no value will be shown or not. Defaults to true. 
-
-column - at least one is required. Can have many columns. Shown in the order given in the macro markup.
-
-column level parameters
-
-label - not required. Label for the column. Label will default to the column aggregate if not specified.
-aggregate - required. Can be Count, Sum(property), Min, Max. Can not be average. Date properties can not to be aggregated. 
-conditions - not required. MQL where condition to restrict the column aggregation.
-
-total - not required. True or false. Sums the column and shown as row if true. True is the default. Always shown as the bottom row.
-
-sub-totals - not required. Only applicable when the column aggregation is count or sum. Calculates a sum of the rows in the column restricted by the subtotal condition. Can have many subtotals. Shown in order given in macro markup. 
-
-sub totals level parameters
-
-conditions - not required if sub- total is specified. MQL where clause. Defaults to sum total of the column.
-label - not required. Label for the sub-totals. Label will default to the condition of the subtotal if not specified and if no conditions, empty.
-
-Example use
+The card description section of the "Acme requests" looked similar to:
 
 {{
-   cross-project-rollup
-   project-group:  mingle, cruise
-   rows: Feature
-   rows-conditions: Type = Feature
-   columns:
-   -     label: Story Planning Estimate
-         aggregate: sum('planning estimate')
-         conditions: Type = Story
-   -     label: Number of bugs
-         aggregate: count(*)
-         conditions: Type = Bug
-   sub-totals:
-   -     label: Total completed
-         conditions: Status > Closed
+  table
+    query: SELECT number, name WHERE TAGGED WITH 'Acme request'
+    project: twist
 }}
+
+{{
+  table
+    query: SELECT number, name WHERE TAGGED WITH 'Acme request'
+    project: go
+}}
+
+{{
+  table
+    query: SELECT number, name WHERE TAGGED WITH 'Acme request'
+    project: mingle
+}}
+
+As you can see, we have a table to represent the requests for each product. Also, notice that the tagged with value matches the card name. We have our card defaults set up so that it puts this markup in each newly created card. However, we need to change the TAGGED WITH section of each table to match the name of the current card. What we would really like to do is have a query where the MQL is, "SELECT number, name WHERE TAGGED WITH THIS CARD.name" That way we wouldn't need to modify the card description that the card defaults give us. Unfortunately, Mingle doesn't allow you to use THIS CARD.property in the TAGGED WITH section of MQL. (Although I've added a story for that.)
+
+Solution
+
+This macro allows us to get the cards from a project that are tagged with the current card's name. For example, the following markup would get all of the cards in the twist project that are tagged with the current card's name:
+
+{{
+  customer-requests
+    query: SELECT name, number WHERE TAGGED WITH this card.name ORDER BY number
+    projects: customer_requests, twist
+}}
+
+There are only three important files in this macro: the macro itself and two helper files, init.rb and html_table.rb.
+
+init.rb contains boilerplate code that just loads the code files we need and associates the macro name "customer-requests" with our macro class.
+lib/customer_requests/html_table.rb is a convenience class that builds an HTML table, so that we don't need to bother with those details in the macro class.
+lib/customer_requests/macro.rb contains the core macro class. I'll go into the details of this file below.
+
+First of all, notice that both html_table.rb and macro.rb are inside the module CustomerRequests. The purpose of this module is just to distinguish our code from any other plugin code. We highly recommend that your macros follow this convention.
+
+Like all custom macros, our initialize method takes three arguments: parameters, projects and current_user. We store all of these arguments for later use. (@current_user isn't used later, but we've stored it just out of habit.) The "parameters" argument contains the values of our macro parameters, represented as a hash. The second argument will either be a single project or an array of projects based on the value of self.supports_project_group? In our case, since self.supports_project_group? is true, we receive an array of projects. That's why we specify that projects is an Array.
+
+Why do we need to specify two projects? The first project is the current project. We need this to get the current card's name. The second project is the project that has cards that are tagged with the current card's name (the cards we are really interested in).
+
+The execute method is called when this macro is displayed. All this method does is get the data for the table and then output the data as an HTML table. Getting the data is the interesting part. We do the following to get the data:
+1. Use the first project to get the name of the current card (get_this_card_name). E.g., "Acme request"
+2. Replace "this card.name" in the query with the name of the current card (replace_this_card_name_in_query). E.g., "SELECT name, number WHERE TAGGED WITH this card.name" becomes "SELECT name, number WHERE TAGGED WITH 'Acme request'"
+3. Execute this new MQL query against the second project (get_data).
